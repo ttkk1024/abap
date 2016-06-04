@@ -86,6 +86,40 @@ DATA: zzxsj LIKE sy-uzeit.
 DATA: l_line LIKE bsvx-sttxt.
 DATA: l_objnr LIKE aufk-objnr.
 DATA: l_data LIKE sy-datum.
+*
+DATA: gt_events TYPE slis_t_event.
+DATA tem_grid TYPE REF TO cl_gui_alv_grid.
+CLASS lcl_event_receiver DEFINITION.
+  PUBLIC SECTION.
+    METHODS:
+      update_delta_tables
+                    FOR EVENT data_changed_finished OF cl_gui_alv_grid
+        IMPORTING e_modified et_good_cells.
+ENDCLASS.
+
+CLASS lcl_event_receiver IMPLEMENTATION.
+  METHOD update_delta_tables.
+
+    CLEAR: wa_save_et.
+    LOOP AT it_save_et INTO wa_save_et.
+      CLEAR wa_save_et-makts.
+      SELECT SINGLE  name1 INTO wa_save_et-name1 FROM lfa1 WHERE lifnr = wa_save_et-lifnr.
+      SELECT SINGLE  sortl INTO wa_save_et-sortl FROM lfa1 WHERE lifnr = wa_save_et-lifnr.
+      MODIFY it_save_et FROM wa_save_et TRANSPORTING name1 sortl.
+      CLEAR: wa_save_et.
+    ENDLOOP.
+    DATA stbl TYPE lvc_s_stbl.
+*   稳定刷新
+    stbl-row = 'X'." 基于行的稳定刷新
+    stbl-col = 'X'." 基于列稳定刷新
+    CALL METHOD tem_grid->refresh_table_display
+      EXPORTING
+        is_stable = stbl.
+  ENDMETHOD.                  "update_delta_tables
+ENDCLASS.
+
+DATA gt_event_receiver TYPE REF TO lcl_event_receiver .
+*
 *宏的定义
 DEFINE fill.
   afield-col_pos = l_pos.
@@ -202,6 +236,7 @@ START-OF-SELECTION.
 
   IF ( item[] IS NOT INITIAL OR it_save[] IS NOT INITIAL ) AND lt_et[] IS INITIAL.
     IF p1 = 'X'.
+      PERFORM frm_get_event.
       PERFORM frm_get_jskc.                            "获取寄售可用库存
       PERFORM frm_process_data.
       PERFORM frm_show_mx.                           "显示分配供应商寄售库存的明细数据
@@ -236,11 +271,12 @@ FORM frm_get_data1 .
                                AND marc~beskz IN ('F','X')
                                AND afko~dispo IN s_dispo
                                AND marc~loggr <> 'A1'
+                               "AND resb~WEMPF = ''
                                AND resb~sortf IN s_sortf.
 
 
   SORT item BY werks aufnr matnr.
-  DELETE item WHERE beskz = 'X' AND ablad <> '外购'.
+  DELETE item WHERE beskz = 'X' AND ablad <> '外购' OR wempf IS NOT INITIAL.
   SELECT * FROM afko
     WHERE aufnr IN s_aufnr.
     l_gd10 = l_gd10 + 1.
@@ -413,9 +449,9 @@ ENDFORM.                    " FRM_SHOW_DATA
 FORM frm_get_data2 .
   SELECT * INTO CORRESPONDING FIELDS OF TABLE it_save
     FROM zrmm220t1
-    WHERE werks = p_werks AND zdydh IN s_zdydh
-                          AND mblnr = ''
-                          AND xloek = ''.
+    WHERE werks = p_werks AND zdydh IN s_zdydh.
+  "AND mblnr = ''
+  "AND xloek = ''.
 
   LOOP AT it_save.
     SELECT SINGLE maktx INTO it_save-makts
@@ -664,50 +700,169 @@ ENDFORM.                    "set_status1
 *  <--  p2        text
 *----------------------------------------------------------------------*
 FORM hebing .
-  slayt-colwidth_optimize = 'X'.
-  slayt-zebra             = 'X'.
-  slayt-info_fieldname = 'COLOR'.
-  repid = sy-repid.
-  varnt-report = sy-repid.
-  varnt-handle = 2.
-  SET TITLEBAR 'T100' WITH '寄售转储单合并'.
+  PERFORM frm_get_xc.
+*  slayt-colwidth_optimize = 'X'.
+*  slayt-zebra             = 'X'.
+*  slayt-info_fieldname = 'COLOR'.
+*  repid = sy-repid.
+*  varnt-report = sy-repid.
+*  varnt-handle = 2.
+*  SET TITLEBAR 'T100' WITH '寄售转储单合并'.
+*
+*  CLEAR it_fldcat[].
+*  PERFORM catlg_set USING: 'CHCK'     '选择',
+*                           'LIFNR'    '供应商',
+*                           'NAME1'    '供应商名称',
+*                           'WERKS'    '工厂',
+*                           'UMLGO'    '发出库',
+*                           'LGFSB'    '二级库',
+*                           'LGORT'    '车间库',
+*                           'LGPBE'    '仓管员',
+*                           'ZBANZ'    '班组',
+*                           'ZGWEI'    '工位',
+*                           'MATNR'    '物料号 ',
+*                           'MAKTS'    '物料描述',
+*                           'AUFN2'    '订单号 ',
+*                           'BDMNG'    '需求量',
+*                           'MEINS'    '单位'.
+*
+*  LOOP AT it_fldcat.
+*    IF it_fldcat-fieldname = 'CHCK'.
+*      it_fldcat-edit = 'X'.
+*      it_fldcat-checkbox = 'X'.
+*    ENDIF.
+*    MODIFY it_fldcat.
+*  ENDLOOP.
 
-  CLEAR it_fldcat[].
-  PERFORM catlg_set USING: 'CHCK'     '选择',
-                           'LIFNR'    '供应商',
-                           'NAME1'    '供应商名称',
-                           'WERKS'    '工厂',
-                           'UMLGO'    '发出库',
-                           'LGFSB'    '二级库',
-                           'LGORT'    '车间库',
-                           'LGPBE'    '仓管员',
-                           'ZBANZ'    '班组',
-                           'ZGWEI'    '工位',
-                           'MATNR'    '物料号 ',
-                           'MAKTS'    '物料描述',
-                           'AUFN2'    '订单号 ',
-                           'BDMNG'    '需求量',
-                           'MEINS'    '单位'.
+*  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+*    EXPORTING
+*      i_callback_program       = repid
+*      it_fieldcat              = it_fldcat[]
+*      i_save                   = 'A'
+*      is_variant               = varnt
+*      is_layout                = slayt
+*      i_callback_user_command  = 'USER_COMMAND2'
+*      i_callback_pf_status_set = 'SET_STATUS2'
+*    TABLES
+*      t_outtab                 = it_save_et.
+  CLEAR it_fieldcat[].
+  i_grid_settings-edt_cll_cb  = 'X' .
+  gd_layout-stylefname = 'FIELD_STYLE'.
+  gd_layout-cwidth_opt = 'X'.
+  gd_layout-zebra             = 'X'.
 
-  LOOP AT it_fldcat.
-    IF it_fldcat-fieldname = 'CHCK'.
-      it_fldcat-edit = 'X'.
-      it_fldcat-checkbox = 'X'.
-    ENDIF.
-    MODIFY it_fldcat.
-  ENDLOOP.
 
-  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+  wa_fieldcat-fieldname = 'CHCK'.
+  wa_fieldcat-scrtext_m = '选择'.
+  wa_fieldcat-edit = 'X'.
+  wa_fieldcat-checkbox = 'X'.
+  wa_fieldcat-col_pos     = 0.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname = 'LIFNR'.
+  wa_fieldcat-scrtext_m ='供应商'.
+  wa_fieldcat-col_pos     = 1.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname ='NAME1'.
+  wa_fieldcat-scrtext_m =  '供应商名称'.
+  wa_fieldcat-col_pos     = 2.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname =  'WERKS'.
+  wa_fieldcat-scrtext_m =    '工厂'.
+  wa_fieldcat-col_pos     = 3.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname = 'UMLGO'.
+  wa_fieldcat-scrtext_m = '发出库'.
+  wa_fieldcat-col_pos     = 4.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname =  'LGFSB'.
+  wa_fieldcat-scrtext_m = '二级库'.
+  wa_fieldcat-col_pos     = 5.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname = 'LGORT'.
+  wa_fieldcat-scrtext_m =  '车间库'.
+  wa_fieldcat-col_pos     = 6.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+
+  wa_fieldcat-fieldname = 'LGPBE'.
+  wa_fieldcat-scrtext_m =  '仓管员'.
+  wa_fieldcat-col_pos     = 7.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname = 'ZBANZ'.
+  wa_fieldcat-scrtext_m =   '班组'.
+  wa_fieldcat-col_pos     = 8.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname = 'ZGWEI'.
+  wa_fieldcat-scrtext_m =   '工位'.
+  wa_fieldcat-col_pos     = 9.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname = 'MATNR'.
+  wa_fieldcat-scrtext_m =  '物料号 '.
+  wa_fieldcat-col_pos     = 10.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname =  'MAKTS'.
+  wa_fieldcat-scrtext_m =   '物料描述'.
+  wa_fieldcat-col_pos     = 11.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname =   'AUFN2'.
+  wa_fieldcat-scrtext_m =   '订单号 '.
+  wa_fieldcat-col_pos     = 12.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname = 'BDMNG'.
+  wa_fieldcat-scrtext_m =   '需求量'.
+  wa_fieldcat-no_zero = 'X'.
+  wa_fieldcat-qfieldname = 'MEINS'.
+  wa_fieldcat-inttype = 'X'.
+  wa_fieldcat-col_pos     = 13.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  wa_fieldcat-fieldname = 'MEINS'.
+  wa_fieldcat-scrtext_m =   '单位'.
+  wa_fieldcat-col_pos     = 14.
+  APPEND wa_fieldcat TO it_fieldcat.
+  CLEAR  wa_fieldcat.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
     EXPORTING
-      i_callback_program       = repid
-      it_fieldcat              = it_fldcat[]
-      i_save                   = 'A'
-      is_variant               = varnt
-      is_layout                = slayt
-      i_callback_user_command  = 'USER_COMMAND2'
+      i_grid_settings          = i_grid_settings
+      i_callback_program       = sy-cprog
+      is_layout_lvc            = gd_layout
+      it_fieldcat_lvc          = it_fieldcat
+      i_save                   = 'X'
       i_callback_pf_status_set = 'SET_STATUS2'
+      i_callback_user_command  = 'USER_COMMAND2'
+      it_events                = gt_events "注册回车事件
     TABLES
-      t_outtab                 = it_save.
+      t_outtab                 = it_save_et
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
 ENDFORM.
 
 *&--------------------------------------------------------------------*
@@ -729,25 +884,31 @@ FORM user_command2 USING r_ucomm LIKE sy-ucomm
         WHEN ''.
       ENDCASE.
     WHEN 'SAVEPRINT'.
-      READ TABLE it_save WITH KEY chck = 'X'.
+      READ TABLE it_save_et WITH KEY chck = 'X'.
       IF sy-subrc <> 0.
         MESSAGE s000(oo) WITH '至少选择一行'.
         EXIT.
       ENDIF.
+      CLEAR: it_save,it_save[].
+      LOOP AT it_save_et.
+        MOVE-CORRESPONDING it_save_et TO it_save.
+        APPEND it_save.
+        CLEAR: it_save_et,it_save.
+      ENDLOOP.
       PERFORM savedata.
       PERFORM printdata USING 'ZMM220'.
       LEAVE PROGRAM.
     WHEN 'EXIT'.
       LEAVE PROGRAM.
     WHEN '&ZALL'.
-      LOOP AT it_save WHERE chck IS INITIAL.
-        it_save-chck = 'X'.
-        MODIFY it_save TRANSPORTING chck.
+      LOOP AT it_save_et WHERE chck IS INITIAL.
+        it_save_et-chck = 'X'.
+        MODIFY it_save_et TRANSPORTING chck.
       ENDLOOP.
     WHEN '&ZSAL'.
-      LOOP AT it_save WHERE chck IS NOT INITIAL.
-        it_save-chck = ''.
-        MODIFY it_save TRANSPORTING chck.
+      LOOP AT it_save_et WHERE chck IS NOT INITIAL.
+        it_save_et-chck = ''.
+        MODIFY it_save_et TRANSPORTING chck.
       ENDLOOP.
   ENDCASE.
 ENDFORM. "user_com
@@ -978,6 +1139,7 @@ FORM printdata USING p_formname.
       p_i = p_i + 1.
       APPEND lft_i.
     ENDLOOP.
+    SORT lft_i BY zgwei lifnr matnr.
     MOVE-CORRESPONDING lt_h TO lft_h.
     APPEND lft_h.
 
@@ -1026,3 +1188,64 @@ FORM printdata USING p_formname.
     ENDIF.
   ENDIF.
 ENDFORM.                    " PRINTDATA
+
+FORM frm_get_xc.
+  DATA ls_stylerow TYPE lvc_s_styl.
+  DATA lt_styletab TYPE lvc_t_styl.
+  DATA l_matnr LIKE zrmm002t1-matnr.
+  CLEAR: it_save_et,it_save_et[].
+  LOOP AT it_save.
+    MOVE-CORRESPONDING it_save TO it_save_et.
+    APPEND it_save_et.
+  ENDLOOP.
+  LOOP AT it_save_et INTO wa_save_et.
+    CLEAR l_matnr.
+    SELECT SINGLE matnr INTO l_matnr FROM zrmm002t1 WHERE matnr = wa_save_et-matnr.
+    IF sy-subrc = 0 AND l_matnr IS NOT INITIAL.
+      ls_stylerow-fieldname = 'LIFNR'.
+      ls_stylerow-style = cl_gui_alv_grid=>mc_style_enabled.
+      INSERT ls_stylerow INTO TABLE wa_save_et-field_style.
+
+      ls_stylerow-fieldname = 'BDMNG'.
+      ls_stylerow-style = cl_gui_alv_grid=>mc_style_enabled.
+      INSERT ls_stylerow INTO TABLE wa_save_et-field_style.
+
+      MODIFY it_save_et FROM wa_save_et.
+      CLEAR wa_save_et.
+    ENDIF.
+  ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  FRM_GET_EVENT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM frm_get_event .
+  DATA l_events TYPE LINE OF slis_t_event.
+  CLEAR l_events.
+  l_events-name = 'CALLER_EXIT'.
+  l_events-form = 'FM_BUTTON'.
+  APPEND l_events TO gt_events.
+ENDFORM.                    " FRM_GET_EVENT
+
+FORM fm_button USING e_grid TYPE slis_data_caller_exit.
+
+  CALL FUNCTION 'GET_GLOBALS_FROM_SLVC_FULLSCR'
+    IMPORTING
+      e_grid = tem_grid.
+
+* 设置enter事件
+  CALL METHOD tem_grid->register_edit_event
+    EXPORTING
+      i_event_id = cl_gui_alv_grid=>mc_evt_enter
+    EXCEPTIONS
+      error      = 1
+      OTHERS     = 2.
+
+  DATA: gt_event_receiver TYPE REF TO lcl_event_receiver .
+  CREATE OBJECT gt_event_receiver.
+  SET HANDLER gt_event_receiver->update_delta_tables FOR tem_grid.                          "更新内表itab
+ENDFORM.                    "FM_BUTTON
